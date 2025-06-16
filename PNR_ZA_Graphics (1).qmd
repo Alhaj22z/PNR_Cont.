@@ -1,0 +1,379 @@
+---
+title: "PNR_Condensed_for Render"
+format: html
+editor: visual
+---
+
+### Libraries and Files
+
+```{r}
+library(Hmisc)
+library(ggplot2)
+library(ggthemes)
+library(sf)
+library(plotly)
+library(dplyr)
+library(tidyverse)
+library(rnaturalearth)
+library(colorspace)
+library(htmltools)
+library(htmlwidgets)
+library(DT)
+library(knitr)
+
+pnr_naomi <- read.csv("~/pnr-dreams-analysis/PNR/pnr_naomi.csv")
+```
+
+### Simple plots: DREAMS and non-DREAMS SNU counts and pop
+
+```{r}
+pnr_naomi %>% 
+  filter(fiscal_year == 2024 & dreams != "?") %>% ## let's look at just the most recent FY
+  group_by(country.x, dreams) %>% 
+  summarise(snus_ct = n_distinct(cop22_psnuuid), .groups = "drop") %>% 
+  ungroup() %>% 
+  ggplot(aes(x= country.x, y= snus_ct, group = dreams, fill= dreams)) +
+  geom_bar(position= "dodge", width = .4, stat = "identity")+ 
+  theme_light()+
+  scale_fill_manual(values = c("Y" = "#c51b8a", "N" = "#31a354"))+
+  ylab("SNU count")+
+  coord_flip()
+options(scipen=999999)
+
+pnr_naomi %>% 
+  filter(fiscal_year == 2024 & dreams != "?") %>% 
+  group_by(country.x, dreams) %>% 
+  summarise(population = sum(female_population), na.rm = T, .groups = "drop") %>% 
+    ungroup() %>% 
+  ggplot(aes(x= country.x, y= round(population,1), group = dreams, fill= dreams)) +
+  geom_bar(position= "dodge", width = .4, stat = "identity")+ 
+  theme_light()+
+  scale_fill_manual(values = c("Y" = "#c51b8a", "N" = "#31a354"))+
+  ylab("AGYW Population")+
+  coord_flip()
+```
+
+### AGYW Population and Incidence in DREAMS vs Non-DREAMS
+
+```{r}
+pnr_naomi <- pnr_naomi %>%
+  mutate(F_inc_cat = factor(findInterval(female_incidence, c(-Inf, .0003, .007, .00999, Inf)),
+                            labels=c("0-0.3", ">0.3-0.7", "0.7-0.999", ">0.999")),
+         M_inc_cat = factor(findInterval(male_incidence, c(-Inf, .0003, .007, Inf)),
+                            labels=c("0-0.3", ">0.3-0.7")))
+pnr_naomi %>% 
+  group_by(F_inc_cat) %>% 
+  summarise(
+    snus = n_distinct(area_id),
+    min = min(female_incidence),
+    max = max(female_incidence)
+  )
+pnr_naomi %>% 
+  group_by(M_inc_cat) %>% 
+  summarise(
+    snus = n_distinct(area_id),
+    min = min(male_incidence),
+    max = max(male_incidence)
+  )
+
+
+## compare average, min, mean, max incidence for DREAMS and non-DREAMS
+x <- pnr_naomi %>% 
+  filter(fiscal_year == 2024) %>% 
+  group_by(dreams) %>% 
+    mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>% 
+  summarise(
+    snus = n_distinct(area_id),
+    f_min = round(min(female_incidence),4),
+    f_max = round(max(female_incidence),4),
+    f_mean = round(mean(female_incidence),4),
+    f_pop = round(mean(female_population),2)
+  )
+datatable(x)
+```
+
+### PNR over time, DREAMS vs non-DREAMS (all AYP, 15-24)
+
+```{r}
+pnr_naomi %>% filter(dreams != "Military") %>% 
+  group_by(fiscal_year, dreams) %>% 
+  mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>% ## add this code every time to make NAs to 0 when you agg up 
+  summarise(onprep = sum(on_prep1), hts_pos = sum(hts_total), .groups = "drop") %>% 
+  mutate(pnr = ifelse(hts_pos != 0, onprep / hts_pos, NA), ) %>% 
+  ggplot(aes(x = as.character(fiscal_year), y = pnr, group = dreams, color = dreams)) + 
+  geom_line() + 
+  geom_point(color = "black") +
+  geom_text(aes(label = round(pnr, 2)), vjust = -0.5) +
+  xlab("Fiscal Year") + 
+  ylab("PrEP-to-Need Ratio") + 
+  scale_color_manual(values = c("Y" = "#c51b8a", "N" = "#31a354"))+ ## keep Y/N colors constant 
+  scale_y_continuous(limits = c(0, 8)) + 
+  theme_clean()
+```
+
+### PNR over time by sex and age in DREAMS vs non-DREAMS
+
+```{r}
+#| fig.width: 6
+#| fig.height: 8
+pnr_naomi %>%
+  filter(dreams != "Military") %>% # better to filter before grouping
+  group_by(fiscal_year, dreams, sex) %>%
+    mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>% ## add this code every time to make NAs to 0 when you agg up
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE), 
+    on_prep1_total = sum(on_prep1, na.rm = TRUE), 
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total != 0, on_prep1_total / hts_pos_total, NA)
+  ) %>% 
+  ggplot(aes(x = as.character(fiscal_year), y = pnr, group = sex, color = sex)) +
+  geom_line() +
+  geom_point() +  
+  geom_text(aes(label = round(pnr, 2)), vjust = -0.5) +  
+  xlab("Fiscal Year") +
+  ylab("PrEP-to-Need Ratio") +
+  #scale_color_manual(values = c("Y" = "#c51b8a", "N" = "#31a354"))+ ## keep Y/N colors constant
+  #scale_color_manual(values = c("15-19" = "#8856a7", "20-24" = "#de2d26"))+ ## keep Y/N colors constant
+  scale_y_continuous(limits = c(0, 11)) +
+  theme_hc()+
+  facet_wrap(~dreams)+
+  ggtitle("PNR in all countries, AYP 15-24, by DREAMS and Sex")
+
+dreams <- c("Botswana", "Uganda", "Zambia", "Zimbabwe") 
+
+for (i in dreams) {
+bysex <- pnr_naomi %>% 
+    filter(dreams != "Military",country.x == i) %>% 
+    group_by(fiscal_year, dreams, sex) %>%
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE), 
+    on_prep1_total = sum(on_prep1, na.rm = TRUE), 
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total != 0, on_prep1_total / hts_pos_total, NA)
+  ) %>% 
+  ggplot(aes(x = as.character(fiscal_year), y = pnr, group = sex, color = sex)) +
+  geom_line() +
+  geom_point() +  
+  geom_text(aes(label = round(pnr, 2)), vjust = -0.5) +  
+  xlab("Fiscal Year") +
+  ylab("PrEP-to-Need Ratio") +
+  #scale_color_manual(values = c("Y" = "#c51b8a", "N" = "#31a354"))+ ## keep Y/N colors constant
+  #scale_color_manual(values = c("15-19" = "#8856a7", "20-24" = "#de2d26"))+ ## keep Y/N colors constant
+  scale_y_continuous(limits = c(0, 15)) +
+  theme_hc()+
+  facet_wrap(~dreams)+
+  ggtitle(paste("PNR in", i, "by DREAMS and Sex, AYP 15-24"))  # Update title with country name
+ 
+  print(bysex)  # This will display the chart in the R console or RStudio
+}
+```
+
+### PNR over time for AGYW (15-19) by DREAMS and Country
+
+```{r}
+#| fig.width: 15
+#| fig.height: 20
+agyw1 <- pnr_naomi %>%
+  filter(dreams != "Military", sex == "Female", ageasentered == "15-19") %>% # better to filter before grouping
+  group_by(fiscal_year, country.x, dreams) %>%
+   # mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>% ## add this code every time to make NAs to 0 when you agg up
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE), 
+    on_prep1_total = sum(on_prep1, na.rm = TRUE), 
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total != 0, on_prep1_total / hts_pos_total, NA)
+  ) %>% 
+  ggplot(aes(x = as.character(fiscal_year), y = pnr, group = dreams, color = dreams, text = paste0("Country", country.x, "<br>HTS+", hts_pos_total, "<br>On PrEP", on_prep1_total, "<br>PNR", round(pnr,2)))) +
+  geom_line() +
+  geom_point() +  
+#  geom_text(aes(label = round(pnr, 2)), vjust = -0.5) +  
+  xlab("Fiscal Year") +
+  ylab("PrEP-to-Need Ratio") +
+  scale_color_manual(values = c("Y" = "#c51b8a", "N" = "#31a354"))+ ## keep Y/N colors constant
+  #scale_y_continuous(limits = c(0,NA))+
+  theme_clean()+
+  facet_wrap(~country.x, scale = "free_y")+
+  theme(strip.text = element_text(size = 8),
+        strip.background = element_rect(fill = "white",
+                                          color = "white"),
+        panel.spacing = unit(3, "lines"))
+
+ggplotly(agyw1, tooltip = "text")
+```
+
+### PNR Over Time for AGYW (20-24) by DREAMS and Country
+
+```{r}
+#| fig.width: 15
+#| fig.height: 20
+agyw1 <- pnr_naomi %>%
+  filter(dreams != "Military", sex == "Female", ageasentered == "20-24") %>% # better to filter before grouping
+  group_by(fiscal_year, country.x, dreams) %>%
+   # mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>% ## add this code every time to make NAs to 0 when you agg up
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE), 
+    on_prep1_total = sum(on_prep1, na.rm = TRUE), 
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total != 0, on_prep1_total / hts_pos_total, NA)
+  ) %>% 
+  ggplot(aes(x = as.character(fiscal_year), y = pnr, group = dreams, color = dreams, text = paste0("Country", country.x, "<br>HTS+", hts_pos_total, "<br>On PrEP", on_prep1_total, "<br>PNR", round(pnr,2)))) +
+  geom_line() +
+  geom_point() +  
+#  geom_text(aes(label = round(pnr, 2)), vjust = -0.5) +  
+  xlab("Fiscal Year") +
+  ylab("PrEP-to-Need Ratio") +
+  scale_color_manual(values = c("Y" = "#c51b8a", "N" = "#31a354"))+ ## keep Y/N colors constant
+  #scale_y_continuous(limits = c(0,NA))+
+  theme_clean()+
+  facet_wrap(~country.x, scale = "free_y")+
+  theme(strip.text = element_text(size = 8),
+        strip.background = element_rect(fill = "white",
+                                          color = "white"),
+        panel.spacing = unit(3, "lines"))
+
+ggplotly(agyw1, tooltip = "text")
+```
+
+### PNR Incidence Matrix for all countries
+
+```{r}
+#Creation of overall annual PNR by selected Dreams countries and their respective HIV incidence
+
+# Define your DREAMS summary
+
+# Create your summary data
+dreams_summary <- tibble::tribble(
+  ~country, ~mean_pnr_agyw, ~mean_incidence_agyw,
+  "Botswana", 5.002583, 0.0050112683,
+  "Cote d'Ivoire", 10.753846, 0.0008159921,
+  "Haiti", 2.990926, 0.0010918465,
+  "Kenya", 6.185034, 0.0010995155,
+  "Lesotho", 12.035595, 0.0063349949,
+  "Malawi", 6.005996, 0.0021978384,
+  "Mozambique", 3.174729, 0.0086427944,
+  "Namibia", 51.253151, 0.0059011906,
+  "South Africa", 5.456840, 0.0088142467,
+  "Tanzania", 11.979475, 0.0036799572,
+  "Uganda", 4.762931, 0.0030110810,
+  "Zambia", 8.019348, 0.0045390772,
+  "Zimbabwe", 11.154693, 0.0032077908
+)
+
+# Calculate overall means
+mean_pnr_all <- mean(dreams_summary$mean_pnr_agyw)
+mean_incidence_all <- mean(dreams_summary$mean_incidence_agyw)
+
+# Create base scatter plot
+fig <- plot_ly(
+  data = dreams_summary,
+  x = ~mean_incidence_agyw * 1000,  # x-axis: HIV incidence per 1000
+  y = ~mean_pnr_agyw,               # y-axis: Annual PnR
+  type = 'scatter',
+  mode = 'markers+text',
+  text = ~country,
+  textposition = 'top center',
+  marker = list(size = 10, color = 'blue')
+)
+
+# Add horizontal mean line (PnR)
+fig <- fig %>% 
+  add_trace(
+    x = c(0, max(dreams_summary$mean_incidence_agyw) * 1000),
+    y = c(mean_pnr_all, mean_pnr_all),
+    type = 'scatter',
+    mode = 'lines',
+    line = list(dash = 'dash', color = 'black'),
+    inherit = FALSE,
+    showlegend = FALSE
+  )
+
+# Add vertical mean line (Incidence)
+fig <- fig %>% 
+  add_trace(
+    x = c(mean_incidence_all * 1000, mean_incidence_all * 1000),
+    y = c(0, max(dreams_summary$mean_pnr_agyw)),
+    type = 'scatter',
+    mode = 'lines',
+    line = list(dash = 'dash', color = 'black'),
+    inherit = FALSE,
+    showlegend = FALSE
+  )
+
+# Layout
+fig <- fig %>% layout(
+  title = "DREAMS Countries: Annual PnR vs HIV Incidence (Interactive)",
+  xaxis = list(title = "HIV Incidence per 1000 (AGYW)"),
+  yaxis = list(title = "Annual PrEP-to-Need Ratio (AGYW)"),
+  hovermode = 'closest'
+)
+
+fig
+
+
+```
+
+### PNR Incidence Matrix for selected countries
+
+```{r}
+intercepts <- pnr_naomi %>% 
+  filter(sex == "Female" &
+         fiscal_year == 2024) %>% 
+  group_by(country.x, sex) %>% 
+  summarise(onprep = sum(on_prep1),
+            hts_pos = sum(hts_total),
+            AGYW_incidence = mean(female_incidence, na.rm = T),
+            .groups = "drop") %>% 
+  mutate(pnr_mean = ifelse(hts_pos > 0, onprep/hts_pos, NA))
+
+# Step 2: create a list of the countries you want to produce charts for
+dreams <- c("Botswana", "Uganda", "Zambia", "Zimbabwe") 
+### you can put all DREAMS countries here, or switch out the names for the countries you choose. The below code will produce charts for all of the countries you list here.
+ 
+# Step 3: For-loop that prints charts for all the listed countries.
+# Loop through each country in the dreams list
+for (i in dreams) {
+sp <- pnr_naomi %>% 
+    filter(sex == "Female" &
+           fiscal_year == 2024,
+           country.x == i) %>% 
+    group_by(fy_char, dreams, sex, area_name) %>% 
+    summarise(on_prep_total = sum(on_prep1),
+              hts_pos_total = sum(hts_total),
+              AGYW_incidence = first(female_incidence), 
+              .groups = "drop") %>% 
+    mutate(pnr = ifelse(hts_pos_total != 0, on_prep_total / hts_pos_total, NA)) 
+
+sp_plot <- ggplot(sp) +
+    geom_point(aes(x = AGYW_incidence, y = pnr, color = dreams,
+               text = paste("AGYW Incidence per 100:", (round(AGYW_incidence, 4) * 100), "<br>SNU:", area_name, "<br>PNR:", round(pnr,3)))) +
+    xlab("AGYW 15-24 Incidence") +
+    ylab("AGYW 15-24 PrEP-to-Need Ratio") +
+    geom_vline(aes(xintercept =  subset(intercepts, country.x == i)$AGYW_incidence), linetype = "dashed", color = "blue") +  # HIV mean incidence
+    geom_hline(aes(yintercept = subset(intercepts, country.x == i)$pnr_mean), linetype = "dashed", color = "red") +       # PNR threshold
+annotate("text", 
+             x = max(subset(intercepts, country.x == i)$AGYW_incidence), 
+             y = max(sp$pnr), 
+             label = paste("HIV Mean Incidence:", round(subset(intercepts, country.x == i)$AGYW_incidence, 4)), 
+             vjust = -0.5, color = "blue") +  # Label for vertical line
+    annotate("text", 
+             x = median(sp$AGYW_incidence), 
+             y = subset(intercepts, country.x == i)$pnr_mean, 
+             label = paste("PNR Mean:", round(subset(intercepts, country.x == i)$pnr_mean, 4)), 
+             hjust = 1.5, color = "red") +  # Label for horizontal line
+    theme_hc() +
+    ggtitle(paste("PEPFAR SNUs in", i, "by DREAMS, PNR and Incidence: AGYW 15-24"))  # Update title with country name
+ 
+  # Plotly interaction
+  plotly_chart <- ggplotly(sp_plot, tooltip = "text")
+  # Print or save the plotly chart
+  print(plotly_chart)  # This will display the chart in the R console or RStudio
+}
+```

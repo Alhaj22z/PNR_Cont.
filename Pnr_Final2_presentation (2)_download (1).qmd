@@ -1,0 +1,780 @@
+---
+---
+title: "PNR Analysis Final"
+author: "Zena Alhaj"
+output: 
+ qmd
+    toc: true
+    number_sections: true
+    latex_engine: xelatex
+fontsize: 11pt
+geometry: margin=1in
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+1 + 1
+```
+
+You can add options to executable code like this
+
+```{r}
+#| echo: false
+2 * 2
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
+
+### Start code
+
+```{r}
+
+library(tidyverse)
+library(ggplot2)
+library(bslib)
+library(DT)
+library(dplyr)
+library(odbc)
+library(ggthemes)
+library(forcats)
+
+```
+
+```{r}
+#startup
+pnr_final2 <- read.csv("pnr_final_v2.csv")
+
+#langan's code just to see which countries have dreams and which do not
+
+pnr_final2 <- pnr_final2 %>% 
+  mutate(DREAMS_Country = ifelse((country == "Botswana"|
+                                 country == "Eswatini"| country == "Haiti"| country == "Kenya"|
+                                 country == "Lesotho"| country == "Cote d'Ivoire"|country == "Malawi"|
+                                 country == "Mozambique"| country == "Namibia"| country == "Rwanda"|
+                                 country == "South Africa"| country == "South Sudan"| country == "Uganda"|
+                                 country == "Tanzania"| country == "Zambia"| country == "Zimbabwe"), "DREAMS in Country", "No DREAMS Programs"))
+## think about the difference between these two crosstabs:
+table( pnr_final2$country, pnr_final2$DREAMS_Country)
+table( pnr_final2$country, pnr_final2$dreams)
+
+#my code to visualize the above code
+pnr_final2 %>%
+count(country, DREAMS_Country) %>%
+  ggplot(aes(x = fct_reorder(country, n), y = n, fill = DREAMS_Country)) + 
+  geom_col(position = "dodge", color = "black") +
+  coord_flip() +  # Flip axes for better readability
+  labs(x = "Country", y = "Number of Districts", fill = "DREAMS Program Status",
+       title = "DREAMS vs Non-DREAMS Districts by Country") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+
+```
+
+```{r}
+ 
+
+# Aggregate data
+pnr_summary <- pnr_final2 %>%
+  group_by(fiscal_year, dreams) %>%
+  filter(dreams != "?") %>%
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE), 
+    on_prep1_total = sum(on_prep1, na.rm = TRUE), 
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total != 0, on_prep1_total / hts_pos_total, NA)
+  )
+  
+# Plot the summarized data
+pnr_summary %>%
+  ggplot(aes(x = fiscal_year, y = pnr, group = dreams, color = dreams)) +
+  geom_line() +
+  geom_point() +  
+  geom_text(aes(label = round(pnr, 2)), vjust = -0.5) +  
+  xlab("Fiscal Year") +
+  ylab("PrEP-to-Need Ratio") +
+  scale_y_continuous(limits = c(0, 8)) +
+  theme_clean()
+
+
+```
+
+```{r}
+#lets look at it from a country level looking just at our most recent data (2024):
+
+
+ 
+# Create a faceted bar chart by country
+pnr_final2 %>%
+   group_by(fiscal_year, dreams, country) %>%
+  filter(dreams != "?" & fiscal_year == 2024) %>%
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE), 
+    on_prep1_total = sum(on_prep1, na.rm = TRUE), 
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total != 0, on_prep1_total / hts_pos_total, NA)) %>%
+
+ ggplot(aes(x = dreams, y = pnr, fill = dreams)) +
+  geom_col(color = "black", position = "dodge") +
+  facet_wrap(~ country, scales = "free_y") +  # Facet by country
+  labs(title = "PrEP-to-Need Ratio (2024) by Country: DREAMS vs. Non-DREAMS",
+       x = "DREAMS Program Status", 
+       y = "PrEP-to-Need Ratio",
+       fill = "DREAMS Status") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+#Ok now that we identified which of the countries for latest data (2024) have PNR for both Dreams and Non-dreams, I now want to aggregate by age (Ageasentered) and sex (Female/male)
+
+#first we have to look at our original dataset (pnr_Final2) and make sure to only include our "filtered" countries
+
+# Load necessary libraries
+library(tidyverse)
+
+# Load dataset
+pnr_final2 <- read.csv("pnr_final_v2.csv")
+
+# Define the 16 countries that have both DREAMS and non-DREAMS districts
+dreams_countries <- c("Botswana", "Cote d'Ivoire", "Eswatini", "Haiti", "Kenya",
+                      "Lesotho", "Malawi", "Mozambique", "Namibia", "Rwanda",
+                      "South Africa", "South Sudan", "Tanzania", "Uganda", "Zambia", "Zimbabwe")
+
+# Filter for only fiscal year 2024 and selected countries
+pnr_filtered <- pnr_final2 %>%
+  filter(country %in% dreams_countries, fiscal_year == 2024, dreams != "?")
+
+# Group data by country, DREAMS status, age, and sex
+pnr_age_sex_summary <- pnr_filtered %>%
+  group_by(country, dreams, ageasentered, sex) %>%
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE),
+    on_prep1_total = sum(on_prep1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total != 0, on_prep1_total / hts_pos_total, NA)
+  )
+
+# Visualization: PNR Differences by Age, Sex, and DREAMS Status (Only 2024)
+pnr_age_sex_summary %>%
+  ggplot(aes(x = ageasentered, y = pnr, fill = sex)) +
+  geom_col(position = "dodge", color = "black") +
+  facet_wrap(~ country + dreams, scales = "free_y") +  
+  labs(
+    title = "PrEP-to-Need Ratio (2024) by Age & Sex: DREAMS vs. Non-DREAMS",
+    x = "Age Group", 
+    y = "PrEP-to-Need Ratio",
+    fill = "Sex"
+  ) +
+  theme_minimal() +
+theme(
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10),
+    strip.text = element_text(size = 9)
+  )
+```
+
+---
+#OPTION: I can do a box plot of PNR    R-graph-gallery.com, data-to-viz
+---
+
+```{r}
+# Define DREAMS countries
+dreams_countries <- c("Botswana", "Cote d'Ivoire", "Eswatini", "Haiti", "Kenya",
+                      "Lesotho", "Malawi", "Mozambique", "Namibia", "Rwanda",
+                      "South Africa", "South Sudan", "Tanzania", "Uganda", "Zambia", "Zimbabwe")
+
+# Filter and prepare AGYW data
+agyw_pnr <- pnr_final2 %>%
+  filter(
+    country %in% dreams_countries,
+    dreams != "?",
+    ageasentered %in% c( "15-19"),
+    sex == "Female",
+    fiscal_year %in% c(2022, 2023, 2024)  # Filter for 2022–2024 only
+  ) %>%
+  mutate(age_group = ageasentered) %>%
+  group_by(country, fiscal_year, dreams, age_group) %>%
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE),
+    on_prep1_total = sum(on_prep1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(pnr = ifelse(hts_pos_total > 0, on_prep1_total / hts_pos_total, NA))
+
+
+ggplot(agyw_pnr, aes(x = fiscal_year, y = pnr, color = dreams, group = interaction(dreams, age_group))) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ country, scales = "free_y", ncol = 4)  +
+  labs(
+    title = "PNR Over Time for AGYW (15–19) by DREAMS Status, Age, and Country",
+    subtitle = "Faceted by country, colored by DREAMS, grouped by age group",
+    x = "Fiscal Year", y = "PrEP-to-Need Ratio (PNR)",
+    color = "DREAMS Status"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 9),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+```
+
+```{r}
+
+```
+
+```{r}
+library(plotly)
+
+library(tidyverse)
+library(ggplot2)
+
+
+
+
+# Define the countries
+dreams_countries <- c("Botswana", "Cote d'Ivoire", "Eswatini", "Haiti", "Kenya",
+                      "Lesotho", "Malawi", "Mozambique", "Namibia", "Rwanda",
+                      "South Africa", "South Sudan", "Tanzania", "Uganda", "Zambia", "Zimbabwe")
+
+# Filter, group, and calculate PNR
+agyw_pnr <- pnr_final2 %>%
+  filter(
+    country %in% dreams_countries,
+    dreams != "?",
+    ageasentered %in% c("15-19", "20-24"),
+    sex == "Female",
+    fiscal_year %in% c(2022, 2023, 2024)
+  ) %>%
+  mutate(age_group = ageasentered) %>%
+  group_by(country, fiscal_year, dreams, age_group) %>%
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE),
+    on_prep1_total = sum(on_prep1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total > 0, on_prep1_total / hts_pos_total, NA)
+  )
+
+# Create the ggplot object for age group 15-19
+agyw_pnr_15_19 <- agyw_pnr %>% filter(age_group == "15-19")
+
+pnr_plot_15_19 <- ggplot(agyw_pnr_15_19, aes(
+  x = fiscal_year, 
+  y = pnr, 
+  color = dreams, 
+  group = interaction(dreams, age_group),
+  text = paste0(
+    "Country: ", country,
+    "<br>Year: ", fiscal_year,
+    "<br>DREAMS: ", dreams,
+    "<br>Age Group: ", age_group,
+    "<br>HTS+: ", hts_pos_total,
+    "<br>On PrEP: ", on_prep1_total,
+    "<br>PNR: ", round(pnr, 2)
+  )
+)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ country, scales = "free_y", ncol = 4) +
+    scale_y_continuous(
+    limits = c(0, 50),
+    breaks = seq(0, 50, by = 10)
+  ) +
+
+  labs(
+    title = "PNR Over Time for AGYW (15–19) by DREAMS Status, Age, and Country",
+    subtitle = "Interactive plot: Hover for details",
+    x = "Fiscal Year", y = "PrEP-to-Need Ratio (PNR)",
+    color = "DREAMS Status"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 9),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+# Create the ggplot object for age group 20-24
+agyw_pnr_20_24 <- agyw_pnr %>% filter(age_group == "20-24")
+
+pnr_plot_20_24 <- ggplot(agyw_pnr_20_24, aes(
+  x = fiscal_year, 
+  y = pnr, 
+  color = dreams, 
+  group = interaction(dreams, age_group),
+  text = paste0(
+    "Country: ", country,
+    "<br>Year: ", fiscal_year,
+    "<br>DREAMS: ", dreams,
+    "<br>Age Group: ", age_group,
+    "<br>HTS+: ", hts_pos_total,
+    "<br>On PrEP: ", on_prep1_total,
+    "<br>PNR: ", round(pnr, 2)
+  )
+)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ country, scales = "free_y", ncol = 4) +
+    scale_y_continuous(
+    limits = c(0, 50),
+    breaks = seq(0, 50, by = 10)
+  ) +
+
+  labs(
+    title = "PNR Over Time for AGYW (20–24) by DREAMS Status, Age, and Country",
+    subtitle = "Interactive plot: Hover for details",
+    x = "Fiscal Year", y = "PrEP-to-Need Ratio (PNR)",
+    color = "DREAMS Status"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 9),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+# Convert to interactive plots
+ggplotly(pnr_plot_15_19, tooltip = "text")
+ggplotly(pnr_plot_20_24, tooltip = "text")
+
+```
+
+```{r}
+library(tidyverse)
+
+
+
+# Define the countries
+dreams_countries <- c("Botswana", "Cote d'Ivoire", "Eswatini", "Haiti", "Kenya",
+                      "Lesotho", "Malawi", "Mozambique", "Namibia", "Rwanda",
+                      "South Africa", "South Sudan", "Tanzania", "Uganda", "Zambia", "Zimbabwe")
+
+# Filter and calculate PNR for each country and age group
+agyw_pnr <- pnr_final2 %>%
+  filter(
+    country %in% dreams_countries,
+    dreams != "?",
+    ageasentered %in% c("15-19", "20-24"),
+    sex == "Female",
+    fiscal_year %in% c(2022, 2023, 2024)
+  ) %>%
+  group_by(country, fiscal_year, dreams, ageasentered) %>%
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE),
+    on_prep1_total = sum(on_prep1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total > 0, on_prep1_total / hts_pos_total, NA)
+  )
+
+# Create a table for mean PNR by country, DREAMS status, and age group
+pnr_summary <- agyw_pnr %>%
+  group_by(country, dreams, ageasentered) %>%
+  summarise(mean_pnr = mean(pnr, na.rm = TRUE), .groups = "drop")
+
+# Calculate the mean PNR for DREAMS and non-DREAMS for each age group
+pnr_ratio_table <- pnr_summary %>%
+  spread(dreams, mean_pnr) %>%
+  rename(mean_pnr_Y = "Y", mean_pnr_N = "N") %>%
+  mutate(
+    pnr_ratio = mean_pnr_Y / mean_pnr_N
+  ) %>%
+  select(country, mean_pnr_N, mean_pnr_Y, pnr_ratio, ageasentered)
+
+# Separate the table for each age group (15-19 and 20-24)
+pnr_ratio_15_19 <- pnr_ratio_table %>%
+  filter(ageasentered == "15-19")
+
+pnr_ratio_20_24 <- pnr_ratio_table %>%
+  filter(ageasentered == "20-24")
+
+# Print the tables for both age groups
+pnr_ratio_15_19
+pnr_ratio_20_24
+
+
+```
+
+```{r}
+library(tidyverse)
+
+#ABYM MEAN PNR RATIO
+#Dividing DREAMS PNR BY non-Dreams PNR tells you how many times higher(or lower) the PrEP-to-Need Ratio is for ABYM enrolled in dreams vs those in non-DREAMs
+
+# Define the countries
+dreams_countries <- c("Botswana", "Cote d'Ivoire", "Eswatini", "Haiti", "Kenya",
+                      "Lesotho", "Malawi", "Mozambique", "Namibia", "Rwanda",
+                      "South Africa", "South Sudan", "Tanzania", "Uganda", "Zambia", "Zimbabwe")
+
+# Filter and calculate PNR for each country and age group
+abym_pnr <- pnr_final2 %>%
+  filter(
+    country %in% dreams_countries,
+    dreams != "?",
+    ageasentered %in% c("15-19", "20-24"),
+    sex == "Male",
+    fiscal_year %in% c(2022, 2023, 2024)
+  ) %>%
+  group_by(country, fiscal_year, dreams, ageasentered) %>%
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE),
+    on_prep1_total = sum(on_prep1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total > 0, on_prep1_total / hts_pos_total, NA)
+  )
+
+# Create a table for mean PNR by country, DREAMS status, and age group
+pnr_summary <- abym_pnr %>%
+  group_by(country, dreams, ageasentered) %>%
+  summarise(mean_pnr = mean(pnr, na.rm = TRUE), .groups = "drop")
+
+# Calculate the mean PNR for DREAMS and non-DREAMS for each age group
+pnr_ratio_table <- pnr_summary %>%
+  spread(dreams, mean_pnr) %>%
+  rename(mean_pnr_Y = "Y", mean_pnr_N = "N") %>%
+  mutate(
+    pnr_ratio = mean_pnr_Y / mean_pnr_N
+  ) %>%
+  select(country, mean_pnr_N, mean_pnr_Y, pnr_ratio, ageasentered)
+
+# Separate the table for each age group (15-19 and 20-24)
+pnr_ratio_15_19 <- pnr_ratio_table %>%
+  filter(ageasentered == "15-19")
+
+pnr_ratio_20_24 <- pnr_ratio_table %>%
+  filter(ageasentered == "20-24")
+
+# Print the tables for both age groups
+pnr_ratio_15_19
+pnr_ratio_20_24
+
+```
+
+```{r}
+library(plotly)
+
+library(tidyverse)
+library(ggplot2)
+
+
+
+
+# Define the countries
+dreams_countries <- c("Botswana", "Cote d'Ivoire", "Eswatini", "Haiti", "Kenya",
+                      "Lesotho", "Malawi", "Mozambique", "Namibia", "Rwanda",
+                      "South Africa", "South Sudan", "Tanzania", "Uganda", "Zambia", "Zimbabwe")
+
+# Filter, group, and calculate PNR
+abym_pnr <- pnr_final2 %>%
+  filter(
+    country %in% dreams_countries,
+    dreams != "?",
+    ageasentered %in% c("15-19", "20-24"),
+    sex == "Male",
+    fiscal_year %in% c(2022, 2023, 2024)
+  ) %>%
+  mutate(age_group = ageasentered) %>%
+  group_by(country, fiscal_year, dreams, age_group) %>%
+  summarise(
+    hts_pos_total = sum(hts_total, na.rm = TRUE),
+    on_prep1_total = sum(on_prep1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pnr = ifelse(hts_pos_total > 0, on_prep1_total / hts_pos_total, NA)
+  )
+
+# Create the ggplot object for age group 15-19
+abym_pnr_15_19 <- abym_pnr %>% filter(age_group == "15-19")
+
+pnr_plot_15_19 <- ggplot(abym_pnr_15_19, aes(
+  x = fiscal_year, 
+  y = pnr, 
+  color = dreams, 
+  group = interaction(dreams, age_group),
+  text = paste0(
+    "Country: ", country,
+    "<br>Year: ", fiscal_year,
+    "<br>DREAMS: ", dreams,
+    "<br>Age Group: ", age_group,
+    "<br>HTS+: ", hts_pos_total,
+    "<br>On PrEP: ", on_prep1_total,
+    "<br>PNR: ", round(pnr, 2)
+  )
+)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ country, scales = "free_y", ncol = 4) +
+      scale_y_continuous(
+    limits = c(0, 40),
+    breaks = seq(0, 40, by = 10)
+  ) +
+
+  labs(
+    title = "PNR Over Time for ABYM (15–19) by DREAMS Status, Age, and Country",
+    subtitle = "Interactive plot: Hover for details",
+    x = "Fiscal Year", y = "PrEP-to-Need Ratio (PNR)",
+    color = "DREAMS Status"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 9),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+# Create the ggplot object for age group 20-24
+abym_pnr_20_24 <- abym_pnr %>% filter(age_group == "20-24")
+
+pnr_plot_20_24 <- ggplot(abym_pnr_20_24, aes(
+  x = fiscal_year, 
+  y = pnr, 
+  color = dreams, 
+  group = interaction(dreams, age_group),
+  text = paste0(
+    "Country: ", country,
+    "<br>Year: ", fiscal_year,
+    "<br>DREAMS: ", dreams,
+    "<br>Age Group: ", age_group,
+    "<br>HTS+: ", hts_pos_total,
+    "<br>On PrEP: ", on_prep1_total,
+    "<br>PNR: ", round(pnr, 2)
+  )
+)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ country, scales = "free_y", ncol = 4) +
+      scale_y_continuous(
+    limits = c(0, 40),
+    breaks = seq(0, 40, by = 10)
+  ) +
+
+ 
+  labs(
+    title = "PNR Over Time for ABYM (20–24) by DREAMS Status, Age, and Country",
+    subtitle = "Interactive plot: Hover for details",
+    x = "Fiscal Year", y = "PrEP-to-Need Ratio (PNR)",
+    color = "DREAMS Status"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 9),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+# Convert to interactive plots
+ggplotly(pnr_plot_15_19, tooltip = "text")
+ggplotly(pnr_plot_20_24, tooltip = "text")
+
+```
+
+```{undefined}
+#| label: Specific country
+
+```
+
+# {r}
+
+### AGYW PNR
+
+```{r}
+library(readr)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+pnr_naomi_1 <- read_csv("~/pnr_naomi (1).csv")
+pnr_naomi_1 <- pnr_naomi_1 %>%
+  filter(!is.na(prepnew_total) & !is.na(prepct_avg) & !is.na(female_population) & !is.na(female_incidence) & !is.na(male_incidence)) %>%
+  mutate(
+    agyw_prep = prepnew_total + prepct_avg
+  )
+
+# Reshape the data to long format for faceting
+plot_df <- pnr_naomi_1 %>%
+  select(area_name, agyw_prep, female_population, female_incidence, male_incidence) %>%
+  pivot_longer(
+    cols = c(female_incidence, male_incidence),
+    names_to = "incidence_type",
+    values_to = "incidence"
+  ) %>%
+  mutate(
+    incidence_type = recode(incidence_type,
+                            "female_incidence" = "Female Incidence",
+                            "male_incidence" = "Male Incidence")
+  )
+
+# Create the bubble plot
+ggplot(plot_df, aes(x = incidence, y = agyw_prep, size = female_population, color = incidence_type)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~incidence_type) +
+  scale_size(range = c(3, 15)) +
+  labs(
+    x = "Incidence",
+    y = "AGYW on PrEP",
+    size = "Female Population",
+    color = "Incidence Type"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(plotly)  # Load plotly for interactive plots
+
+# Load required libraries
+library(dplyr)
+library(plotly)
+
+# Filter for AGYW (Female only) and prepare variables
+agyw_df <- pnr_naomi_1 %>%
+  filter(sex == "Female") %>%
+  mutate(
+    agyw_on_prep = prepnew_total + prepct_avg,
+    incidence_bin = cut(female_incidence,
+                        breaks = seq(0, max(female_incidence, na.rm = TRUE) + 0.001, by = 0.001),
+                        include.lowest = TRUE)
+  )
+
+# Create the Plotly bubble chart
+plot_ly(
+  data = agyw_df,
+  x = ~female_incidence,
+  y = ~agyw_on_prep,
+  color = ~incidence_bin,
+  text = ~paste("Area:", area_name,
+                "<br>Country:", country.x,
+                "<br>Female Pop:", round(female_population),
+                "<br>Incidence:", round(female_incidence, 4),
+                "<br>AGYW on PrEP:", round(agyw_on_prep),
+                "<br>Incidence Bin:", incidence_bin),
+  type = 'scatter',
+  mode = 'markers',
+  marker = list(
+    size = ~sqrt(female_population) / 10,
+    sizemode = 'diameter',
+    line = list(width = 1, color = 'black'),
+    opacity = 0.7
+  )
+) %>%
+  layout(
+    title = "AGYW on PrEP vs Female Incidence (Fine-Grained Incidence Bins)",
+    xaxis = list(title = "Female HIV Incidence"),
+    yaxis = list(title = "AGYW on PrEP (prepnew_total + prepct_avg)"),
+    hovermode = "closest"
+  )
+
+
+```
+
+```{r}
+#Now were looking into ABYW
+# Load libraries
+library(dplyr)
+library(plotly)
+
+# Prepare data for ABYM (filter for male only)
+abym_df <- pnr_naomi_1 %>%
+  filter(sex == "Male") %>%
+  mutate(
+    abym_on_prep = prepnew_total + prepct_avg,
+    incidence_bin = cut(male_incidence,
+                        breaks = seq(0, max(male_incidence, na.rm = TRUE) + 0.001, by = 0.001),
+                        include.lowest = TRUE)
+  )
+
+# Plotly bubble chart for ABYM
+plot_ly(
+  data = abym_df,
+  x = ~male_incidence,
+  y = ~abym_on_prep,
+  color = ~incidence_bin,
+  text = ~paste("Area:", area_name,
+                "<br>Country:", country.x,
+                "<br>Male Pop:", round(male_population),
+                "<br>Incidence:", round(male_incidence, 4),
+                "<br>ABYM on PrEP:", round(abym_on_prep),
+                "<br>Incidence Bin:", incidence_bin),
+  type = 'scatter',
+  mode = 'markers',
+  marker = list(
+    size = ~sqrt(male_population) / 10,
+    sizemode = 'diameter',
+    line = list(width = 1, color = 'black'),
+    opacity = 0.7
+  )
+) %>%
+  layout(
+    title = "ABYM on PrEP vs Male Incidence (Fine-Grained Incidence Bins)",
+    xaxis = list(title = "Male HIV Incidence"),
+    yaxis = list(title = "ABYM on PrEP (prepnew_total + prepct_avg)"),
+    hovermode = "closest"
+  )
+
+```
+
+```{r}
+#| label: install packages
+```
+
+\`\`\`{r} \# Load necessary libraries library(dplyr) library(ggplot2) library(plotly) library(viridis) library(colorspace) \# For qualitative_hcl
+
+# Load and clean data
+
+pnr_naomi_1 \<- read_csv("\~/pnr_naomi (1).csv")
+
+# Define DREAMS countries
+
+dreams_countries \<- c("Botswana", "Cote d'Ivoire", "Eswatini", "Haiti", "Kenya", "Lesotho", "Malawi", "Mozambique", "Namibia", "Rwanda", "South Africa", "South Sudan", "Tanzania", "Uganda", "Zambia", "Zimbabwe")
+
+# Prepare the data for AGYW group
+
+agyw_pnr \<- pnr_naomi_1 %\>% filter(country.x %in% dreams_countries, age_group_label == "15-24") %\>% mutate( on_prep1 = as.numeric(on_prep1), on_prep2 = as.numeric(on_prep2), female_incidence = as.numeric(female_incidence), female_population = as.numeric(female_population), pnr = ((on_prep1 + on_prep2) / 2) / (female_incidence \* female_population) ) %\>% drop_na(pnr, female_incidence)
+
+# Split data by country
+
+country_split \<- agyw_pnr %\>% split(.\$country.x) %\>% keep(\~ nrow(.x) \> 0)
+
+# Assign a unique color to each country
+
+country_colors \<- setNames( qualitative_hcl(length(dreams_countries), palette = "Dark 3"), dreams_countries )
+
+# Create plots for each country and store them in a list
+
+country_plots \<- lapply(dreams_countries, function(country) { country_data \<- country_split\[\[country\]\]
+
+plot_ly(country_data, x = \~female_incidence, y = \~pnr, type = 'scatter', mode = 'markers', marker = list(color = country_colors\[country\], size = 10)) %\>% layout(title = country, xaxis = list(title = "Female Incidence"), yaxis = list(title = "PNR")) })
+
+# Combine the plots using subplot
+
+subplot( country_plots, nrows = 4, margin = 0.05, shareX = FALSE, shareY = FALSE, titleX = TRUE, titleY = TRUE ) %\>% layout(title = "PNR vs Incidence (AGYW) by Country")
